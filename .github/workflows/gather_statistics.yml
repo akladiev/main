@@ -130,12 +130,15 @@ jobs:
                 workflowRunStats['Commit Time'] = workflowData.head_commit && workflowData.head_commit.timestamp ? workflowData.head_commit.timestamp : 'No data'
                 workflowRunStats['Status'] = workflowData.conclusion
                 workflowRunStats['Jobs'] = []
+                
+                var pipelineEndDate;
+                var workflowDuration = 0
 
-                const workflowDuration = await github.rest.actions.getWorkflowRunUsage({
-                    'owner': org,
-                    'repo': repositoryName,
-                    'run_id': runID
-                })
+                //const workflowDuration = await github.rest.actions.getWorkflowRunUsage({
+                //    'owner': org,
+                //    'repo': repositoryName,
+                //    'run_id': runID
+                //})
 
                 workflowRunStats['Total Duration'] = workflowDuration.data.run_duration_ms ? workflowDuration.data.run_duration_ms / 1000 / 60 : undefined
 
@@ -167,9 +170,21 @@ jobs:
                         WaitDuration: waitDuration,
                         Status: workflowJob.conclusion
                     })
+                    
+                    // The longest job out of those running in parallel
+                    // use its completed_at time to determine when the pipeline ended
+                    if (workflowJob.name === 'CPU_Functional_Tests') {
+                        pipelineEndDate = workflowJob.completed_at
+                    }
                 }
-
                 workflowRunsStats.push(workflowRunStats)
+                
+                if (workflowData.run_started_at && pipelineEndDate) {
+                    const start = new Date(workflowData.run_started_at)
+                    const end = new Date(pipelineEndDate)
+                    workflowDuration = Math.abs(end - start) / 1000 / 60
+                }
+                workflowRunStats['Total Duration'] = workflowDuration
             }
             
             console.log(`TOTAL LENGTH OF workflowRunsStats: ${workflowRunsStats.length}`)
