@@ -4,7 +4,7 @@ on:
   pull_request:
   push:
     branches:
-      - main
+      - master
 
 jobs:
   Gather_Statistics:
@@ -28,13 +28,13 @@ jobs:
             console.log(context)
             console.log(context.runId)
             console.log(context.payload.repository.full_name)
-      
+
       - uses: actions/setup-node@v3
         with:
           node-version: 16
 
       - run: npm install xlsx
-      
+
       - name: Gather Workflows Data
         uses: actions/github-script@v6
         with:
@@ -126,53 +126,50 @@ jobs:
                 workflowRunStats['URL'] = workflowData.html_url
                 workflowRunStats['Author'] = workflowData.head_commit.author.name
                 workflowRunStats['Source Branch'] = workflowData.head_branch
-                workflowRunStats['Started At'] = workflowData.run_started_at ? workflowData.run_started_at : undefined
+                workflowRunStats['Started At'] = workflowData.run_started_at ? workflowData.run_started_at : 'Did not start'
                 workflowRunStats['Commit Time'] = workflowData.head_commit && workflowData.head_commit.timestamp ? workflowData.head_commit.timestamp : 'No data'
                 workflowRunStats['Status'] = workflowData.conclusion
                 workflowRunStats['Jobs'] = []
-            
-                var pipelineEndDate;
-                var workflowDuration = 0
 
-                //const workflowDuration = await github.rest.actions.getWorkflowRunUsage({
-                //    'owner': org,
-                //    'repo': repositoryName,
-                //    'run_id': runID
-                //})
-
-                const workflowJobs = await github.rest.actions.listJobsForWorkflowRun({
+                const workflowDuration = await github.rest.actions.getWorkflowRunUsage({
                     'owner': org,
                     'repo': repositoryName,
                     'run_id': runID
                 })
+
+                workflowRunStats['Total Duration'] = workflowDuration.data.run_duration_ms ? workflowDuration.data.run_duration_ms / 1000 / 60 : undefined
+
+                const workflowJobs = await github.rest.actions.listJobsForWorkflowRunAttempt({
+                    'owner': org,
+                    'repo': repositoryName,
+                    'run_id': runID,
+                // By default only latest attempt is returned, and if only one of workflowJobs was rebuilt,
+                // created_at value is updated for all jobs in workflow, including non-rebuilt ones
+                // causing created_at being older than started_at for non-rebuilt jobs
+                // This breaks our waiting time statistics, so for now let's check only data for the 1st attempt
+                // (it seems that we can't count and retrieve all attempts at once anyways)
+                    'attempt_number': 1
+                })
                 
                 for (const workflowJob of workflowJobs.data.jobs) {
-
+                    const jobCreate = new Date(workflowJob.created_at)
                     const jobStart = new Date(workflowJob.started_at)
                     const jobEnd = new Date(workflowJob.completed_at)
+                    const waitDuration = Math.abs(jobStart - jobCreate) / 1000 / 60
                     const jobDuration = Math.abs(jobEnd - jobStart) / 1000 / 60
 
                     workflowRunStats['Jobs'].push({
                         Job: workflowJob.name,
+                        Created: jobCreate,
+                        Started: jobStart,
+                        Finished: jobEnd,
                         Duration: jobDuration,
+                        WaitDuration: waitDuration,
                         Status: workflowJob.conclusion
                     })
-
-                    // The longest job out of those running in parallel
-                    // use its completed_at time to determine when the pipeline ended
-                    if (workflowJob.name === 'CPU_Functional_Tests') {
-                        pipelineEndDate = workflowJob.completed_at
-                    }
                 }
+
                 workflowRunsStats.push(workflowRunStats)
-
-                if (workflowData.run_started_at && pipelineEndDate) {
-                    const start = new Date(workflowData.run_started_at)
-                    const end = new Date(pipelineEndDate)
-                    workflowDuration = Math.abs(end - start) / 1000 / 60
-                }
-
-                workflowRunStats['Total Duration'] = workflowDuration
             }
             
             console.log(`TOTAL LENGTH OF workflowRunsStats: ${workflowRunsStats.length}`)
@@ -191,18 +188,22 @@ jobs:
                 };
                 entry.Jobs.forEach(function (job) {
                     row[job.Job + '_Job_Status'] = job.Status;
+                    row[job.Job + '_Job_Created'] = job.Created;
+                    row[job.Job + '_Job_Started'] = job.Started;
+                    row[job.Job + '_Job_Finished'] = job.Finished;
                     row[job.Job + '_Job_Duration (Mins)'] = job.Duration;
+                    row[job.Job + '_Job_Wait_Duration (Mins)'] = job.WaitDuration;
                 });
                 rows.push(row);
             });
-            
+
             console.log(`TOTAL # OF ROWS TO WRITE: ${rows.length}`)
-              
+
             const worksheet = XLSX.utils.json_to_sheet(rows);
             const workbook = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(workbook, worksheet, 'Workflow Runs');
 
-            const artifactPath = `${{ env.ARTIFACTS_DIR }}/workflowRuns_to_${day}_${month}_${year}.xlsx`
+            const artifactPath = `${{ env.ARTIFACTS_DIR }}/workflowRuns_from_${day}_${month}_${year}.xlsx`
 
             XLSX.writeFile(workbook, artifactPath);
 
