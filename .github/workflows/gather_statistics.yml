@@ -113,7 +113,7 @@ jobs:
                 console.log(`Sleeping for 10 seconds.`)
                 await sleep(10 * 1000);
             }
-            
+
             console.log(`TOTAL # OF COMPLETED RUNS: ${workflowRunsData.data.total_count}`)
 
             for (const workflowData of workflowRuns) {
@@ -130,7 +130,7 @@ jobs:
                 workflowRunStats['Commit Time'] = workflowData.head_commit && workflowData.head_commit.timestamp ? workflowData.head_commit.timestamp : 'No data'
                 workflowRunStats['Status'] = workflowData.conclusion
                 workflowRunStats['Jobs'] = []
-                
+
                 var pipelineEndDate;
                 var workflowDuration = 0
 
@@ -139,8 +139,6 @@ jobs:
                 //    'repo': repositoryName,
                 //    'run_id': runID
                 //})
-
-                workflowRunStats['Total Duration'] = workflowDuration.data.run_duration_ms ? workflowDuration.data.run_duration_ms / 1000 / 60 : undefined
 
                 const workflowJobs = await github.rest.actions.listJobsForWorkflowRunAttempt({
                     'owner': org,
@@ -153,7 +151,7 @@ jobs:
                 // (it seems that we can't count and retrieve all attempts at once anyways)
                     'attempt_number': 1
                 })
-                
+
                 for (const workflowJob of workflowJobs.data.jobs) {
                     const jobCreate = new Date(workflowJob.created_at)
                     const jobStart = new Date(workflowJob.started_at)
@@ -170,7 +168,7 @@ jobs:
                         WaitDuration: waitDuration,
                         Status: workflowJob.conclusion
                     })
-                    
+
                     // The longest job out of those running in parallel
                     // use its completed_at time to determine when the pipeline ended
                     if (workflowJob.name === 'CPU_Functional_Tests') {
@@ -178,7 +176,7 @@ jobs:
                     }
                 }
                 workflowRunsStats.push(workflowRunStats)
-                
+
                 if (workflowData.run_started_at && pipelineEndDate) {
                     const start = new Date(workflowData.run_started_at)
                     const end = new Date(pipelineEndDate)
@@ -186,7 +184,7 @@ jobs:
                 }
                 workflowRunStats['Total Duration'] = workflowDuration
             }
-            
+
             console.log(`TOTAL LENGTH OF workflowRunsStats: ${workflowRunsStats.length}`)
 
             var rows = [];
