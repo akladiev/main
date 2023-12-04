@@ -34,13 +34,13 @@ jobs:
             console.log(context)
             console.log(context.runId)
             console.log(context.payload.repository.full_name)
-      
+
       - uses: actions/setup-node@v3
         with:
           node-version: 16
 
       - run: npm install xlsx
-      
+
       - name: Gather Workflows Data
         uses: actions/github-script@v6
         with:
@@ -141,7 +141,7 @@ jobs:
             }
             
             console.log('Aggregating data for XLSX')
-            
+
             for (const workflowData of workflowRuns) {
 
                 const workflowRunStats = {}
@@ -162,6 +162,7 @@ jobs:
                 console.log(JSON.stringify(workflowData.pull_requests))
                 console.log(JSON.stringify(workflowData.pull_requests))
                 console.log(JSON.stringify(workflowData.pull_requests))
+        
                 workflowRunStats['Pull Request URL'] = workflowData.pull_requests.length ? workflowData.pull_requests[0].url : 'EMPTY'
                 
                 workflowRunStats['Labels'] = 'EMPTY'
@@ -175,10 +176,16 @@ jobs:
                 let workflowDuration = 0
                 let workflowDurationFromStartToFinish = 0
 
-                const workflowJobs = await github.rest.actions.listJobsForWorkflowRun({
+                const workflowJobs = await github.rest.actions.listJobsForWorkflowRunAttempt({
                     'owner': org,
                     'repo': repositoryName,
-                    'run_id': runID
+                    'run_id': runID,
+                // By default only latest attempt is returned, and if only one of workflowJobs was rebuilt,
+                // created_at value is updated for all jobs in workflow, including non-rebuilt ones
+                // causing created_at being older than started_at for non-rebuilt jobs
+                // This breaks our waiting time statistics, so for now let's check only data for the 1st attempt
+                // (it seems that we can't count and retrieve all attempts at once anyways)
+                    'attempt_number': 1
                 })
             
                 let longestJob = {
@@ -187,17 +194,22 @@ jobs:
                 }
                 
                 for (const workflowJob of workflowJobs.data.jobs) {
-
+                    const jobCreate = new Date(workflowJob.created_at)
                     const jobStart = new Date(workflowJob.started_at)
                     const jobEnd = new Date(workflowJob.completed_at)
+                    const waitDuration = Math.abs(jobStart - jobCreate) / 1000 / 60
                     const jobDuration = Math.abs(jobEnd - jobStart) / 1000 / 60
                     const runner = workflowJob.labels ? workflowJob.labels[0] : 'No data'
 
                     workflowRunStats['Jobs'].push({
                         Job: workflowJob.name,
+                        Created: jobCreate,
+                        Started: jobStart,
+                        Finished: jobEnd,
                         Duration: jobDuration,
-                        Status: workflowJob.conclusion,
                         Runner: runner
+                        WaitDuration: waitDuration,
+                        Status: workflowJob.conclusion
                     })
                     
                     // The longest job out of those running in parallel
@@ -219,13 +231,12 @@ jobs:
                     const end = new Date(pipelineEndDate)
                     workflowDurationFromStartToFinish = Math.abs(end - start) / 1000 / 60
                 }
-
                 workflowRunStats['Total Duration'] = workflowDuration
                 workflowRunStats['Duration from Start to Finish'] = workflowDurationFromStartToFinish
             
                 workflowRunsStats.push(workflowRunStats)
             }
-            
+
             console.log(`TOTAL LENGTH OF workflowRunsStats: ${workflowRunsStats.length}`)
 
             let rows = [];
@@ -245,21 +256,24 @@ jobs:
                 };
                 entry.Jobs.forEach(function (job) {
                     row[job.Job + '_Job_Status'] = job.Status;
+                    row[job.Job + '_Job_Created'] = job.Created;
+                    row[job.Job + '_Job_Started'] = job.Started;
+                    row[job.Job + '_Job_Finished'] = job.Finished;
                     row[job.Job + '_Job_Duration (Mins)'] = job.Duration;
                     row[job.Job + '_Job_Runner'] = job.Runner;
+                    row[job.Job + '_Job_Wait_Duration (Mins)'] = job.WaitDuration;
                 });
                 rows.push(row);
                 if (!(index % 100)) {
                   console.log(`Done with ${index} rows...`)
                 }
             });
-            
+
             console.log(`TOTAL # OF ROWS TO WRITE: ${rows.length}`)
-              
+
             const worksheet = XLSX.utils.json_to_sheet(rows);
             const workbook = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(workbook, worksheet, 'Workflow Runs');
-
             const artifactPath = `${{ env.ARTIFACTS_DIR }}/workflowRuns_${pipelineName}.xlsx`
 
             XLSX.writeFile(workbook, artifactPath);
